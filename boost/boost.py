@@ -1,3 +1,6 @@
+import pandas as pd
+from collections import Counter
+
 ## Create a profile
 
 def profile_creation(knn_movies: list, movies_db: pd.DataFrame) -> dict:
