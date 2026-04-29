@@ -1,7 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent.parent / "datasets/ml-1m"
+DATA_DIR = Path(__file__).parent.parent / "ml-1m"
 
 
 def load_ratings() -> pd.DataFrame:
