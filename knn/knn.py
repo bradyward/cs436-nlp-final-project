@@ -53,7 +53,7 @@ class KNNRecommender:
             start, end = mat.indptr[user_index], mat.indptr[user_index + 1]
             mat.data[start:end] -= self.user_means[user_id]
 
-                if users is not None:
+            if users is not None:
             # Align users to the same order as user_index
             users_aligned = pd.DataFrame({"user_id": sorted_users})
             users_aligned = users_aligned.merge(users, on="user_id", how="left")
