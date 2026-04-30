@@ -21,7 +21,7 @@ class KNNRecommender:
         self.train_df: pd.DataFrame = None
         self.ratings_lookup: dict = {}
 
-    def fit(self, train: pd.DataFrame):
+    def fit(self, train: pd.DataFrame, users: pd.DataFrame = None):
         self.train_df = train
         self.global_mean = train["rating"].mean()
 
@@ -40,7 +40,7 @@ class KNNRecommender:
 
         num_users = len(users)
         num_movies = len(movies)
-        mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float32)
+        mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float64)
 
         self.ratings_lookup = {
             (row["user_id"], row["movie_id"]): row["rating"]
@@ -49,11 +49,36 @@ class KNNRecommender:
 
         # subtract per-user mean from rated entries
         self.user_means = train.groupby("user_id")["rating"].mean().to_dict()
-        mat = mat.astype(np.float64)
         for user_id, user_index in self.user_index.items():
             start, end = mat.indptr[user_index], mat.indptr[user_index + 1]
             mat.data[start:end] -= self.user_means[user_id]
 
+                if users is not None:
+            # Align users to the same order as user_index
+            users_aligned = pd.DataFrame({"user_id": sorted_users})
+            users_aligned = users_aligned.merge(users, on="user_id", how="left")
+
+            # Encode gender: M=1, F=0
+            users_aligned["gender_enc"] = (users_aligned["gender"] == "M").astype(float)
+
+            # Age and occupation are already numeric in MovieLens 1M
+            demo_features = users_aligned[["gender_enc", "age", "occupation"]].fillna(0).values
+
+            # Normalize to [0, 1]
+            scaler        = MinMaxScaler()
+            demo_scaled   = scaler.fit_transform(demo_features)
+            demo_scaled  *= 0.2
+
+            demo_sparse   = csr_matrix(demo_scaled)
+            mat = hstack([mat, demo_sparse], format="csr")
+
+            print(f"Matrix shape with demographics: {mat.shape}")
+            print(f"  Rating columns    : {num_movies}")
+            print(f"  Demographic columns: {demo_sparse.shape[1]}")
+        else:
+            print(f"Matrix shape (ratings only): {mat.shape}")
+            print("No demographics provided — using ratings only")
+        
         self.matrix = mat
         self.model.fit(mat)
 
@@ -72,11 +97,10 @@ class KNNRecommender:
         if user_id not in self.user_index or movie_id not in self.movie_index:
             return self.global_mean
 
-        movie_index = self.movie_index[movie_id]
         neighbors = self._neighbors(user_id)
-
-        numer, d = 0.0, 0.0
         idx_to_uid = {v: k for k, v in self.user_index.items()}
+        numer, d = 0.0, 0.0
+
         for n_idx, sim in neighbors:
             if sim <= 0:
                 continue
