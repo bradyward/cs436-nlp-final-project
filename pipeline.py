@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'transformer'))
 
 from load import load_ratings, load_movies
 from boost import recommendations as boost_recommendations
-from bert import load_model, embed_text, cosine_similarity
+from bert import cosine_similarity
 
 MOVIES_CSV = "datasets/movies_merged.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
@@ -81,10 +81,11 @@ if __name__ == "__main__":
     knn_movies = agg[['movie_id', 'title', 'genre', 'rating']].to_dict(orient='records')
 
     if not args.no_bert:
-        print("Loading BERT model...")
-        bert_model, tokenizer = load_model(BERT_MODEL_PATH)
+        print("Loading MiniLM model...")
+        from sentence_transformers import SentenceTransformer
+        minilm = SentenceTransformer('all-MiniLM-L6-v2')
 
-        print("Scoring candidates with BERT semantic similarity...")
+        print("Scoring candidates with MiniLM semantic similarity...")
         movies_db = pd.read_csv(MOVIES_CSV)
         db_titles = movies_db['Title']
 
@@ -101,16 +102,13 @@ if __name__ == "__main__":
             return " ".join(parts)
 
         input_title = input_movie['title'].replace(r'\s*\(\d{4}\)\s*$', '').lower().strip()
-        input_text = get_text(input_title)
-        if not input_text:
-            # fallback: use the title itself so embedding isn't empty
-            input_text = input_title
-        input_embedding = embed_text(input_text, bert_model, tokenizer)
+        input_text = get_text(input_title) or input_title
+        input_embedding = minilm.encode(input_text)
 
         for movie in knn_movies:
             text = get_text(movie['title'])
             if text:
-                candidate_embedding = embed_text(text, bert_model, tokenizer)
+                candidate_embedding = minilm.encode(text)
                 movie['bert_score'] = cosine_similarity(input_embedding, candidate_embedding)
             else:
                 movie['bert_score'] = 0.0
@@ -118,7 +116,7 @@ if __name__ == "__main__":
         knn_movies = sorted(knn_movies, key=lambda m: m['bert_score'], reverse=True)
 
         for m in knn_movies:
-            print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
+            print(f"  {m['title']:<50} sim={m['bert_score']:.4f}")
 
     print("Loading movies DB and applying boost...")
     movies_db = pd.read_csv(MOVIES_CSV)

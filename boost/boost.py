@@ -138,7 +138,7 @@ def scores(row, profile, seen):
                 # Score is now based on how many genres are a match and how frequent they are
                 genre_score  = sum(profile["genres"][g] for g in matched)
                 contribution = min(genre_score / max(profile["genres"].values()), 1.0)
-                score += 1.0 * contribution   # full weight since it's all we have
+                score += 0.4 * contribution   # penalized: no director/actor metadata to verify quality
                 reasons.append(f"genre only fallback: {matched}")
 
     return round(score, 4), reasons
