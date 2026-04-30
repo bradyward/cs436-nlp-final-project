@@ -2,10 +2,11 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, hstack
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
-from load import load_ratings, load_movies
+from load import load_ratings, load_movies, load_users
 
 
 
@@ -25,10 +26,10 @@ class KNNRecommender:
         self.train_df = train
         self.global_mean = train["rating"].mean()
 
-        users = sorted(train["user_id"].unique())
-        movies = sorted(train["movie_id"].unique())
-        self.user_index = {u: i for i, u in enumerate(users)}
-        self.movie_index = {m: j for j, m in enumerate(movies)}
+        sorted_users = sorted(train["user_id"].unique())
+        sorted_movies = sorted(train["movie_id"].unique())
+        self.user_index = {u: i for i, u in enumerate(sorted_users)}
+        self.movie_index = {m: j for j, m in enumerate(sorted_movies)}
 
         rows, cols, data = [], [], []
         for _, row in tqdm(train.iterrows(), total=len(train), desc="Building matrix", unit="rating"):
@@ -38,8 +39,8 @@ class KNNRecommender:
             cols.append(m)
             data.append(row["rating"])
 
-        num_users = len(users)
-        num_movies = len(movies)
+        num_users = len(sorted_users)
+        num_movies = len(sorted_movies)
         mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float64)
 
         self.ratings_lookup = {
@@ -53,7 +54,7 @@ class KNNRecommender:
             start, end = mat.indptr[user_index], mat.indptr[user_index + 1]
             mat.data[start:end] -= self.user_means[user_id]
 
-                if users is not None:
+        if users is not None:
             # Align users to the same order as user_index
             users_aligned = pd.DataFrame({"user_id": sorted_users})
             users_aligned = users_aligned.merge(users, on="user_id", how="left")

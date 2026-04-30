@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'knn'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'boost'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'transformer'))
 
-from load import load_ratings, load_movies
+from load import load_ratings, load_movies, load_users
 from knn import KNNRecommender
 from boost import recommendations as boost_recommendations
 from bert import load_model, score_text
@@ -16,6 +16,12 @@ from bert import load_model, score_text
 MOVIES_CSV = "datasets/movies.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
 FAKE_USER_ID = 999999
+
+# Age bucket codes from MovieLens 1M:
+#  1=Under 18, 18=18-24, 25=25-34, 35=35-44, 45=45-49, 50=50-55, 56=56+
+FAKE_USER_AGE = 35
+FAKE_USER_GENDER = "M"   # "M" or "F"
+FAKE_USER_OCCUPATION = 0  # 0=other/not specified
 
 # User reviews injected as the fake user — comment out the ones you don't want
 
@@ -56,6 +62,7 @@ if __name__ == "__main__":
     print("Loading ratings and ml-1m movies...")
     ratings = load_ratings()
     ml1m_movies = load_movies()
+    users = load_users()
 
     # --- Score user reviews with BERT ---
     print("Loading BERT model...")
@@ -98,10 +105,21 @@ if __name__ == "__main__":
     ratings = pd.concat([ratings, pd.DataFrame(fake_rows)], ignore_index=True)
     print(f"Injected fake user {FAKE_USER_ID} with {len(fake_rows)} ratings into dataset.")
 
+    # Inject fake user demographics so KNN can use age/gender in similarity
+    fake_user_demo = pd.DataFrame([{
+        "user_id":    FAKE_USER_ID,
+        "gender":     FAKE_USER_GENDER,
+        "age":        FAKE_USER_AGE,
+        "occupation": FAKE_USER_OCCUPATION,
+        "zip":        "00000",
+    }])
+    users = pd.concat([users, fake_user_demo], ignore_index=True)
+    print(f"Fake user demographics: age={FAKE_USER_AGE}, gender={FAKE_USER_GENDER}, occupation={FAKE_USER_OCCUPATION}")
+
     # --- KNN ---
     print(f"Fitting KNN on {len(ratings):,} ratings...")
     knn_model = KNNRecommender(k=20)
-    knn_model.fit(ratings)
+    knn_model.fit(ratings, users=users)
 
     print(f"Generating {args.knn_n} KNN candidates for fake user...")
     knn_df = knn_model.recommend(user_id=FAKE_USER_ID, movies_df=ml1m_movies, n=args.knn_n)
