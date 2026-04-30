@@ -109,9 +109,19 @@ class KNNRecommender:
         predictions.sort(key=lambda x: x[1], reverse=True)
         
         top_n = predictions[:n]
-        result = pd.DataFrame(top_n, columns=["movie_id", "predicted_rating"])
+        result = pd.DataFrame(top_n, columns=["movie_id", "rating"])
         if movies_df is not None:
             result = result.merge(movies_df[["movie_id", "title", "genres"]], on="movie_id", how="left")
+            # normalize title: strip year suffix "(YYYY)" and lowercase to match movies.csv
+            result["title"] = result["title"].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True)
+            result["title"] = result["title"].str.replace(r'^(.*),\s*(the|a|an)$', r'\2 \1', regex=True, flags=__import__('re').IGNORECASE)
+            result["title"] = result["title"].str.lower().str.strip()
+            # genres: pipe-separated string -> comma-separated string
+            result["genre"] = result["genres"].apply(
+                lambda g: ", ".join(g.split("|")).lower() if pd.notna(g) else ""
+            )
+            result = result.drop(columns=["genres"])
+            result["rating"] = result["rating"].clip(1.0, 5.0).round(4)
         return result
 
 
@@ -136,8 +146,8 @@ if __name__ == "__main__":
         {
             "movie_id": int(row["movie_id"]),
             "title": row["title"],
-            "genres": row["genres"].split("|") if pd.notna(row["genres"]) else [],
-            "predicted_rating": round(float(np.clip(row["predicted_rating"], 1.0, 5.0)), 4),
+            "genre": row["genre"],
+            "rating": float(row["rating"]),
         } for _, row in recs.iterrows()
     ]
 

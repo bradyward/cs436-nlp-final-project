@@ -1,11 +1,11 @@
 import pandas as pd
 from pathlib import Path
 
-DATA_DIR = Path(__file__).parent.parent / "ml-1m"
-
+# DATA_DIR = Path(__file__).parent.parent / "ml-1m"
+DATA_DIR = "datasets/ml-1m"
 
 def load_ratings() -> pd.DataFrame:
-    path = DATA_DIR / "ratings.dat"
+    path = DATA_DIR + "/ratings.dat"
     df = pd.read_csv(
         path,
         sep="::",
@@ -18,7 +18,7 @@ def load_ratings() -> pd.DataFrame:
 
 
 def load_users() -> pd.DataFrame:
-    path = DATA_DIR / "users.dat"
+    path = DATA_DIR + "/users.dat"
     return pd.read_csv(
         path,
         sep="::",
@@ -29,7 +29,7 @@ def load_users() -> pd.DataFrame:
 
 
 def load_movies() -> pd.DataFrame:
-    path = DATA_DIR / "movies.dat"
+    path = DATA_DIR + "/movies.dat"
     return pd.read_csv(
         path,
         sep="::",

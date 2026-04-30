@@ -3,9 +3,9 @@ from collections import Counter
 import re
 import ast
 
-movies5000unclean = pd.read_csv("tmdb_5000_movies.csv")
-movies1000unclean = pd.read_csv("imdb_top_1000.csv")
-movies5000credits = pd.read_csv("tmdb_5000_credits.csv")
+movies5000unclean = pd.read_csv("datasets/tmdb_5000_movies.csv")
+movies1000unclean = pd.read_csv("datasets/imdb_top_1000.csv")
+movies5000credits = pd.read_csv("datasets/tmdb_5000_credits.csv")
 
 movies5000 = movies5000unclean.copy()
 movies1000 = movies1000unclean.copy()
@@ -69,7 +69,7 @@ for df in [movies5000, movies1000]:
 movies5000['Year'] = movies5000['Year'].astype(str).str[:4]
 
 #Add missed year + delete row
-movies1000.loc[movies1000['Title'] == "apollo 13", 'Year'] = 1995
+movies1000.loc[movies1000['Title'] == "apollo 13", 'Year'] = "1995"
 movies5000 = movies5000.dropna(subset=['Year'])
 
 # Create a key
@@ -87,7 +87,7 @@ movies['Genre'] = movies['Genre'].replace('', 'Nan')
 movies['Genre'] = movies['Genre'].replace('music', 'musical')
 
 # Clean the data being used for KNN for then merge
-movies1m = pd.read_csv("ml-1m/movies.dat", sep="::", engine="python", encoding="latin1", header=None)
+movies1m = pd.read_csv("datasets/ml-1m/movies.dat", sep="::", engine="python", encoding="latin1", header=None)
 movies1m = movies1m.drop(columns=[0])
 movies1m = movies1m.rename(columns={1: 'Title', 2: 'Genre'})
 movies1m['Title'] = movies1m['Title'].apply(lambda x: x[:-7])
@@ -101,3 +101,7 @@ movies1m['Title'] = movies1m['Title'].apply(lambda t: re.sub(r'^(.*),\s*(the|a|a
 mask = (~movies1m['Title'].isin(movies['Title'])) & (~movies1m['Title'].isin(movies['original_title']))
 new_rows = movies1m[mask]
 movies = pd.concat([movies, new_rows], ignore_index=True)
+
+# Save merged datasets
+movies.to_csv("datasets/movies_merged.csv", index=False)
+print("Saved movies_merged.csv")
