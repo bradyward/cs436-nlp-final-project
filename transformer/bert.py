@@ -115,8 +115,37 @@ def validation(model, testing_loader):
     return torch.stack(fin_outputs), torch.stack(fin_targets)
 
 
+def embed_text(text: str, model, tokenizer: 'BertTokenizer') -> np.ndarray:
+    """Return CLS token embedding (768-d). Accepts BERTClass or raw BertModel."""
+    model.eval()
+    inputs = tokenizer(
+        text,
+        None,
+        add_special_tokens=True,
+        max_length=MAX_LEN,
+        padding='max_length',
+        truncation=True,
+        return_token_type_ids=True
+    )
+    ids = torch.tensor([inputs['input_ids']], dtype=torch.long).to(device)
+    mask = torch.tensor([inputs['attention_mask']], dtype=torch.long).to(device)
+    token_type_ids = torch.tensor([inputs['token_type_ids']], dtype=torch.long).to(device)
+    bert_core = model.l1 if hasattr(model, 'l1') else model
+    with torch.no_grad():
+        out = bert_core(input_ids=ids, attention_mask=mask, token_type_ids=token_type_ids)
+    return out.last_hidden_state[:, 0, :].squeeze().cpu().numpy()
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
 def score_text(text: str, model: 'BERTClass', tokenizer: 'BertTokenizer') -> float:
-    """Return positive sentiment probability (0.0-1.0) for a single text."""
+    """Return positive sentiment probability (0.0-1.0) for a single text. Kept for compatibility."""
     model.eval()
     inputs = tokenizer(
         text,

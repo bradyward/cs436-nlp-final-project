@@ -9,19 +9,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'boost'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'transformer'))
 
 from load import load_ratings, load_movies
-from knn import KNNRecommender
 from boost import recommendations as boost_recommendations
-from bert import load_model, score_text
+from bert import load_model, embed_text, cosine_similarity
 
-MOVIES_CSV = "datasets/movies.csv"
+MOVIES_CSV = "datasets/movies_merged.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Movie recommendation pipeline")
-    parser.add_argument("--user_id", type=int, required=True, help="ML-1M user ID")
-    parser.add_argument("--knn_n", type=int, default=50, help="KNN candidates to generate before BERT rerank")
-    parser.add_argument("--knn_top", type=int, default=10, help="Top KNN movies in final output")
+    parser.add_argument("--movie", type=str, required=True, help="Input movie title (partial match ok)")
+    parser.add_argument("--knn_n", type=int, default=50, help="Fan-collaborative candidates fed into BERT + boost")
     parser.add_argument("--boost_top", type=int, default=10, help="Top boosted movies in final output")
     parser.add_argument("--no_bert", action="store_true", help="Skip BERT scoring")
     args = parser.parse_args()
@@ -30,43 +28,97 @@ if __name__ == "__main__":
     ratings = load_ratings()
     ml1m_movies = load_movies()
 
-    print(f"Fitting KNN on {len(ratings):,} ratings...")
-    knn_model = KNNRecommender(k=20)
-    knn_model.fit(ratings)
+    # Match input title to ml-1m movie_id
+    title_query = args.movie.lower()
+    ml1m_movies['title_clean'] = ml1m_movies['title'].str.lower().str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True)
+    matches = ml1m_movies[ml1m_movies['title_clean'].str.contains(title_query, regex=False)]
 
-    print(f"Generating {args.knn_n} KNN candidates for user {args.user_id}...")
-    knn_df = knn_model.recommend(user_id=args.user_id, movies_df=ml1m_movies, n=args.knn_n)
-
-    if knn_df.empty:
-        print(f"No candidates found for user {args.user_id}.")
+    if matches.empty:
+        print(f"No ml-1m movie found matching: '{args.movie}'")
         sys.exit(1)
 
-    knn_movies = knn_df.to_dict(orient="records")
+    input_movie = matches.iloc[0]
+    input_movie_id = input_movie['movie_id']
+    print(f"Matched: {input_movie['title']} (id={input_movie_id})")
+
+    # Find fans: users who rated input movie highly.
+    # Auto-drop threshold from 4 down to 1 until fans found.
+    fans = pd.DataFrame()
+    for threshold in [4.0, 3.0, 2.0, 1.0]:
+        fans = ratings[(ratings['movie_id'] == input_movie_id) & (ratings['rating'] >= threshold)]
+        if not fans.empty:
+            print(f"Found {len(fans)} fans at rating >= {threshold}")
+            break
+
+    if fans.empty:
+        print(f"No ratings found for '{input_movie['title']}'")
+        sys.exit(1)
+
+    fan_ids = fans['user_id'].unique()
+
+    # Collect other movies those fans rated, exclude input movie
+    fan_ratings = ratings[
+        (ratings['user_id'].isin(fan_ids)) &
+        (ratings['movie_id'] != input_movie_id)
+    ]
+
+    # Aggregate: score = mean_rating * log(count+1) to balance quality vs popularity
+    agg = fan_ratings.groupby('movie_id').agg(
+        mean_rating=('rating', 'mean'),
+        count=('rating', 'count')
+    ).reset_index()
+    agg['score'] = agg['mean_rating'] * np.log1p(agg['count'])
+    agg = agg.sort_values('score', ascending=False).head(args.knn_n)
+
+    # Merge with ml-1m titles/genres, normalize to match movies_merged.csv
+    agg = agg.merge(ml1m_movies[['movie_id', 'title', 'genres']], on='movie_id', how='left')
+    agg['title'] = agg['title'].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True)
+    agg['title'] = agg['title'].str.replace(r'^(.*),\s*(the|a|an)$', r'\2 \1', regex=True, flags=__import__('re').IGNORECASE)
+    agg['title'] = agg['title'].str.lower().str.strip()
+    agg['genre'] = agg['genres'].apply(lambda g: g.replace('|', ', ').lower() if pd.notna(g) else "")
+    agg['rating'] = agg['mean_rating'].clip(1.0, 5.0).round(4)
+
+    knn_movies = agg[['movie_id', 'title', 'genre', 'rating']].to_dict(orient='records')
 
     if not args.no_bert:
         print("Loading BERT model...")
         bert_model, tokenizer = load_model(BERT_MODEL_PATH)
 
-        print("Scoring candidates with BERT sentiment...")
+        print("Scoring candidates with BERT semantic similarity...")
         movies_db = pd.read_csv(MOVIES_CSV)
         db_titles = movies_db['Title']
 
+        def get_text(title):
+            match = movies_db[db_titles == title]
+            if match.empty:
+                return ""
+            row = match.iloc[0]
+            parts = []
+            for col in ["Overview", "Tagline", "Genre", "Director", "Actors"]:
+                val = row.get(col)
+                if val is not None and pd.notna(val) and str(val).strip():
+                    parts.append(str(val).strip())
+            return " ".join(parts)
+
+        input_title = input_movie['title'].replace(r'\s*\(\d{4}\)\s*$', '').lower().strip()
+        input_text = get_text(input_title)
+        if not input_text:
+            # fallback: use the title itself so embedding isn't empty
+            input_text = input_title
+        input_embedding = embed_text(input_text, bert_model, tokenizer)
+
         for movie in knn_movies:
-            match = movies_db[db_titles == movie['title']]
-            text = ""
-            if not match.empty:
-                row = match.iloc[0]
-                overview = str(row.get("Overview", "")) if pd.notna(row.get("Overview")) else ""
-                tagline = str(row.get("Tagline", "")) if pd.notna(row.get("Tagline")) else ""
-                text = (overview + " " + tagline).strip()
-            movie['bert_score'] = score_text(text, bert_model, tokenizer) if text else 0.5
+            text = get_text(movie['title'])
+            if text:
+                candidate_embedding = embed_text(text, bert_model, tokenizer)
+                movie['bert_score'] = cosine_similarity(input_embedding, candidate_embedding)
+            else:
+                movie['bert_score'] = 0.0
 
         knn_movies = sorted(knn_movies, key=lambda m: m['bert_score'], reverse=True)
 
-        # Debug bert scores
         for m in knn_movies:
             print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
-
 
     print("Loading movies DB and applying boost...")
     movies_db = pd.read_csv(MOVIES_CSV)
@@ -74,7 +126,7 @@ if __name__ == "__main__":
     final = boost_recommendations(
         knn_movies=knn_movies,
         movies_db=movies_db,
-        knn_top=args.knn_top,
+        knn_top=args.knn_n,
         boost_top=args.boost_top,
     )
 
