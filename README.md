@@ -2,8 +2,8 @@
 
 
 ## Counts for the rating
-1 - \n
-2 - \n
+1 - 
+2 - 
 3 -
 4 -
 5 -
