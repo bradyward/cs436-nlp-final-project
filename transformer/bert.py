@@ -1,15 +1,13 @@
 import os
 import numpy as np
 from sklearn.metrics import accuracy_score
-
 from transformers import BertTokenizer, BertModel
-
 import torch
 from tqdm import tqdm
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-DATA_LOC = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'aclImdb')
+DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'aclImdb')
 MODEL_DIR = os.path.dirname(__file__)
 FINAL_MODEL_PATH = os.path.join(MODEL_DIR, 'bert_final.pt')
 
@@ -20,10 +18,10 @@ NUM_OUT = 2
 LEARNING_RATE = 2e-05
 
 
-def load_data(data_loc, split):
+def load_data(data_dir, split):
     X, y = [], []
     for label_name, label_id in [("pos", 1), ("neg", 0)]:
-        folder = os.path.join(data_loc, split, label_name)
+        folder = os.path.join(data_dir, split, label_name)
         for fname in os.listdir(folder):
             if fname.endswith(".txt"):
                 X.append(open(os.path.join(folder, fname), encoding="utf-8").read().strip())
@@ -32,7 +30,6 @@ def load_data(data_loc, split):
 
 
 class MultiLabelDataset(torch.utils.data.Dataset):
-
     def __init__(self, text, labels, tokenizer, max_len):
         self.tokenizer = tokenizer
         self.text = text
@@ -71,10 +68,8 @@ class BERTClass(torch.nn.Module):
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-        pooler = output_1[0][:, 0]
-        pooler = self.dropout(pooler)
-        output = self.classifier(pooler)
-        return self.softmax(output)
+        pooler = self.dropout(output_1[0][:, 0])
+        return self.softmax(self.classifier(pooler))
 
 
 def loss_fn(outputs, targets):
@@ -115,8 +110,7 @@ def validation(model, testing_loader):
     return torch.stack(fin_outputs), torch.stack(fin_targets)
 
 
-def embed_text(text: str, model, tokenizer: 'BertTokenizer') -> np.ndarray:
-    """Return CLS token embedding (768-d). Accepts BERTClass or raw BertModel."""
+def embed_text(text, model, tokenizer) -> np.ndarray:
     model.eval()
     inputs = tokenizer(
         text,
@@ -144,8 +138,8 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def score_text(text: str, model: 'BERTClass', tokenizer: 'BertTokenizer') -> float:
-    """Return positive sentiment probability (0.0-1.0) for a single text. Kept for compatibility."""
+# Returns sentiment probability
+def score_text(text, model, tokenizer) -> float:
     model.eval()
     inputs = tokenizer(
         text,
@@ -177,8 +171,8 @@ def load_model(model_path=None) -> tuple:
 if __name__ == "__main__":
 
     print("Loading data...")
-    train_X, train_y = load_data(DATA_LOC, "train")
-    test_X, test_y = load_data(DATA_LOC, "test")
+    train_X, train_y = load_data(DATA_DIR, "train")
+    test_X, test_y = load_data(DATA_DIR, "test")
     print(f"  Train: {len(train_X)} | Test: {len(test_X)}")
 
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')

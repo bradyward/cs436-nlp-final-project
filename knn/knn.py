@@ -2,10 +2,11 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, hstack
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler
 from tqdm import tqdm
-from load import load_ratings, load_movies
+from load import load_ratings, load_movies, load_users
 
 
 
@@ -21,14 +22,14 @@ class KNNRecommender:
         self.train_df: pd.DataFrame = None
         self.ratings_lookup: dict = {}
 
-    def fit(self, train: pd.DataFrame):
+    def fit(self, train: pd.DataFrame, users: pd.DataFrame = None):
         self.train_df = train
         self.global_mean = train["rating"].mean()
 
-        users = sorted(train["user_id"].unique())
-        movies = sorted(train["movie_id"].unique())
-        self.user_index = {u: i for i, u in enumerate(users)}
-        self.movie_index = {m: j for j, m in enumerate(movies)}
+        sorted_users = sorted(train["user_id"].unique())
+        sorted_movies = sorted(train["movie_id"].unique())
+        self.user_index = {u: i for i, u in enumerate(sorted_users)}
+        self.movie_index = {m: j for j, m in enumerate(sorted_movies)}
 
         rows, cols, data = [], [], []
         for _, row in tqdm(train.iterrows(), total=len(train), desc="Building matrix", unit="rating"):
@@ -38,9 +39,9 @@ class KNNRecommender:
             cols.append(m)
             data.append(row["rating"])
 
-        num_users = len(users)
-        num_movies = len(movies)
-        mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float32)
+        num_users = len(sorted_users)
+        num_movies = len(sorted_movies)
+        mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float64)
 
         self.ratings_lookup = {
             (row["user_id"], row["movie_id"]): row["rating"]
@@ -49,11 +50,36 @@ class KNNRecommender:
 
         # subtract per-user mean from rated entries
         self.user_means = train.groupby("user_id")["rating"].mean().to_dict()
-        mat = mat.astype(np.float64)
         for user_id, user_index in self.user_index.items():
             start, end = mat.indptr[user_index], mat.indptr[user_index + 1]
             mat.data[start:end] -= self.user_means[user_id]
 
+        if users is not None:
+            # Align users to the same order as user_index
+            users_aligned = pd.DataFrame({"user_id": sorted_users})
+            users_aligned = users_aligned.merge(users, on="user_id", how="left")
+
+            # Encode gender: M=1, F=0
+            users_aligned["gender_enc"] = (users_aligned["gender"] == "M").astype(float)
+
+            # Age and occupation are already numeric in MovieLens 1M
+            demo_features = users_aligned[["gender_enc", "age", "occupation"]].fillna(0).values
+
+            # Normalize
+            scaler = MinMaxScaler()
+            demo_scaled = scaler.fit_transform(demo_features)
+            demo_scaled *= 0.2
+
+            demo_sparse = csr_matrix(demo_scaled)
+            mat = hstack([mat, demo_sparse], format="csr")
+
+            print(f"Matrix shape with demographics: {mat.shape}")
+            print(f"  Rating columns    : {num_movies}")
+            print(f"  Demographic columns: {demo_sparse.shape[1]}")
+        else:
+            print(f"Matrix shape (ratings only): {mat.shape}")
+            print("No demographics provided — using ratings only")
+        
         self.matrix = mat
         self.model.fit(mat)
 
@@ -72,11 +98,10 @@ class KNNRecommender:
         if user_id not in self.user_index or movie_id not in self.movie_index:
             return self.global_mean
 
-        movie_index = self.movie_index[movie_id]
         neighbors = self._neighbors(user_id)
-
-        numer, d = 0.0, 0.0
         idx_to_uid = {v: k for k, v in self.user_index.items()}
+        numer, d = 0.0, 0.0
+
         for n_idx, sim in neighbors:
             if sim <= 0:
                 continue
@@ -95,7 +120,7 @@ class KNNRecommender:
         user_mean = self.user_means.get(user_id, self.global_mean)
         return user_mean + (numer / d)
 
-    def recommend(self, user_id: int, movies_df: pd.DataFrame = None, n: int = 10) -> pd.DataFrame:
+    def recommend(self, user_id, movies_df = None, n = 10) -> pd.DataFrame:
         if user_id not in self.user_index:
             return pd.DataFrame(columns=["movie_id", "predicted_rating", "title", "genres"])
 
@@ -116,7 +141,7 @@ class KNNRecommender:
             result["title"] = result["title"].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True)
             result["title"] = result["title"].str.replace(r'^(.*),\s*(the|a|an)$', r'\2 \1', regex=True, flags=__import__('re').IGNORECASE)
             result["title"] = result["title"].str.lower().str.strip()
-            # genres: pipe-separated string -> comma-separated string
+            # swap genres from pipe separated to comma separated
             result["genre"] = result["genres"].apply(
                 lambda g: ", ".join(g.split("|")).lower() if pd.notna(g) else ""
             )
