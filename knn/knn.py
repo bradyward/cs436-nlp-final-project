@@ -65,12 +65,12 @@ class KNNRecommender:
             # Age and occupation are already numeric in MovieLens 1M
             demo_features = users_aligned[["gender_enc", "age", "occupation"]].fillna(0).values
 
-            # Normalize to [0, 1]
-            scaler        = MinMaxScaler()
-            demo_scaled   = scaler.fit_transform(demo_features)
-            demo_scaled  *= 0.2
+            # Normalize
+            scaler = MinMaxScaler()
+            demo_scaled = scaler.fit_transform(demo_features)
+            demo_scaled *= 0.2
 
-            demo_sparse   = csr_matrix(demo_scaled)
+            demo_sparse = csr_matrix(demo_scaled)
             mat = hstack([mat, demo_sparse], format="csr")
 
             print(f"Matrix shape with demographics: {mat.shape}")
@@ -120,7 +120,7 @@ class KNNRecommender:
         user_mean = self.user_means.get(user_id, self.global_mean)
         return user_mean + (numer / d)
 
-    def recommend(self, user_id: int, movies_df: pd.DataFrame = None, n: int = 10) -> pd.DataFrame:
+    def recommend(self, user_id, movies_df = None, n = 10) -> pd.DataFrame:
         if user_id not in self.user_index:
             return pd.DataFrame(columns=["movie_id", "predicted_rating", "title", "genres"])
 
@@ -141,7 +141,7 @@ class KNNRecommender:
             result["title"] = result["title"].str.replace(r'\s*\(\d{4}\)\s*$', '', regex=True)
             result["title"] = result["title"].str.replace(r'^(.*),\s*(the|a|an)$', r'\2 \1', regex=True, flags=__import__('re').IGNORECASE)
             result["title"] = result["title"].str.lower().str.strip()
-            # genres: pipe-separated string -> comma-separated string
+            # swap genres from pipe separated to comma separated
             result["genre"] = result["genres"].apply(
                 lambda g: ", ".join(g.split("|")).lower() if pd.notna(g) else ""
             )

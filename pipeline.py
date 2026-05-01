@@ -7,56 +7,34 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'knn'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'boost'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'transformer'))
-
 from load import load_ratings, load_movies, load_users
 from knn import KNNRecommender
 from boost import recommendations as boost_recommendations
 from bert import load_model, score_text
 
+
+
 MOVIES_CSV = "datasets/movies.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
 FAKE_USER_ID = 999999
 
-# Age bucket codes from MovieLens 1M:
-#  1=Under 18, 18=18-24, 25=25-34, 35=35-44, 45=45-49, 50=50-55, 56=56+
-FAKE_USER_AGE = 35
-FAKE_USER_GENDER = "M"   # "M" or "F"
 FAKE_USER_OCCUPATION = 0  # 0=other/not specified
-
-# User reviews injected as the fake user — comment out the ones you don't want
-
-# Sci-fi / action fan
-# USER_REVIEWS = [
-#     {"title": "the matrix",      "rating": 5.0, "review": "Mind blowing sci-fi, completely changed how I see movies"},
-#     {"title": "american beauty", "rating": 1.0, "review": "Beautifully shot but too slow and self indulgent"},
-#     {"title": "the dark knight", "rating": 5.0, "review": "Perfect in every way, best superhero film ever"},
-# ]
-
-# Western fan, hates sci-fi
+# USER 1: Sci-Fi / Action Fan
+FAKE_USER_AGE = 28
+FAKE_USER_GENDER = "M" 
 USER_REVIEWS = [
-    {"title": "unforgiven",         "rating": 5.0, "review": "A masterpiece of the western genre, Eastwood at his finest"},
-    {"title": "tombstone",          "rating": 5.0, "review": "Incredible western, Val Kilmer steals every scene"},
-    {"title": "dances with wolves", "rating": 4.0, "review": "Beautiful and epic, one of the best westerns ever made"},
-    {"title": "the matrix",         "rating": 1.0, "review": "Boring and confusing, all style no substance"},
-    {"title": "star wars",          "rating": 1.0, "review": "Childish nonsense, never understood the hype"},
+    {"title": "The Matrix", "rating": 5.0, "review": "Mind blowing sci-fi, completely changed how I see movies."},
+    {"title": "The Rock", "rating": 4.0, "review": "High-octane 90s action at its absolute best."},
+    {"title": "GoldenEye", "rating": 3.0, "review": "A solid Bond film, but feels a bit formulaic now."}
 ]
-
-# Drama-only rater
-# USER_REVIEWS = [
-#     {"title": "schindler's list",         "rating": 5.0, "review": "Devastating and important, one of the greatest films ever made"},
-#     {"title": "the shawshank redemption", "rating": 5.0, "review": "Profoundly moving, a timeless story of hope"},
-#     {"title": "american beauty",          "rating": 4.0, "review": "Haunting and beautifully written, Kevin Spacey is mesmerizing"},
-#     {"title": "forrest gump",             "rating": 4.0, "review": "Genuinely touching, made me laugh and cry"},
-#     {"title": "good will hunting",        "rating": 5.0, "review": "Emotionally gripping, the script is flawless"},
-# ]
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Movie recommendation pipeline")
-    parser.add_argument("--knn_n",    type=int, default=50, help="KNN candidates before BERT rerank")
-    parser.add_argument("--knn_top",  type=int, default=10, help="Top KNN movies in final output")
-    parser.add_argument("--boost_top",type=int, default=10, help="Top boosted movies in final output")
-    parser.add_argument("--no_bert",  action="store_true",  help="Skip BERT scoring")
+    parser.add_argument("--knn_n", type=int, default=50) # KNN candidates before BERT rerank
+    parser.add_argument("--knn_top", type=int, default=10) # Top KNN movies in final output
+    parser.add_argument("--boost_top", type=int, default=10) # Top boosted movies in final output
+    parser.add_argument("--no_bert", action="store_true") # Skip BERT scoring
     args = parser.parse_args()
 
     print("Loading ratings and ml-1m movies...")
@@ -64,17 +42,17 @@ if __name__ == "__main__":
     ml1m_movies = load_movies()
     users = load_users()
 
-    # --- Score user reviews with BERT ---
+    # Score user reviews with BERT
     print("Loading BERT model...")
     bert_model, tokenizer = load_model(BERT_MODEL_PATH)
 
-    print("Scoring user reviews with BERT...")
+    print("Scoring user reviews with BERT")
     for review in USER_REVIEWS:
         review["bert_score"] = score_text(review["review"], bert_model, tokenizer)
         print(f"  {review['title']:<30} rating={review['rating']:.1f}  bert={review['bert_score']:.4f}")
 
-    # --- Inject fake user into ratings ---
-    # Resolve title → movie_id via ml1m_movies
+    # Inject fake user into ratings
+    # Resolve title -> movie_id via ml1m_movies
     title_to_id = {}
     for _, row in ml1m_movies.iterrows():
         clean = row["title"].lower()
@@ -86,9 +64,9 @@ if __name__ == "__main__":
     for review in USER_REVIEWS:
         movie_id = title_to_id.get(review["title"].lower().strip())
         if movie_id is None:
-            print(f"  Warning: '{review['title']}' not found in ml-1m — skipping injection")
+            print(f"Warning: '{review['title']}' not found in ml-1m — skipping injection")
             continue
-        # combined weight: rating scaled by bert confidence
+        # Combined weight: rating scaled by bert confidence
         injected_rating = review["rating"] * review["bert_score"]
         injected_rating = float(np.clip(injected_rating, 1.0, 5.0))
         fake_rows.append({
@@ -116,23 +94,23 @@ if __name__ == "__main__":
     users = pd.concat([users, fake_user_demo], ignore_index=True)
     print(f"Fake user demographics: age={FAKE_USER_AGE}, gender={FAKE_USER_GENDER}, occupation={FAKE_USER_OCCUPATION}")
 
-    # --- KNN ---
-    print(f"Fitting KNN on {len(ratings):,} ratings...")
+    # KNN
+    print(f"Fitting KNN on {len(ratings):,} ratings")
     knn_model = KNNRecommender(k=20)
     knn_model.fit(ratings, users=users)
 
-    print(f"Generating {args.knn_n} KNN candidates for fake user...")
+    print(f"Generating {args.knn_n} KNN candidates for fake user")
     knn_df = knn_model.recommend(user_id=FAKE_USER_ID, movies_df=ml1m_movies, n=args.knn_n)
 
     if knn_df.empty:
-        print("No KNN candidates found for fake user.")
+        print("No KNN candidates found for fake user")
         sys.exit(1)
 
     knn_movies = knn_df.to_dict(orient="records")
 
-    # --- BERT rerank KNN candidates by overview sentiment ---
+    # BERT rerank KNN candidates by overview sentiment
     if not args.no_bert:
-        print("Scoring KNN candidates with BERT sentiment...")
+        print("Scoring KNN candidates with BERT sentiment")
         movies_db = pd.read_csv(MOVIES_CSV)
         db_titles = movies_db['Title']
 
@@ -151,8 +129,8 @@ if __name__ == "__main__":
         for m in knn_movies:
             print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
 
-    # --- Boost ---
-    print("Loading movies DB and applying boost...")
+    # Boost
+    print("Loading movies DB and applying boost")
     movies_db = pd.read_csv(MOVIES_CSV)
 
     final = boost_recommendations(
