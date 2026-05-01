@@ -14,7 +14,7 @@ from bert import load_model, score_text
 
 
 
-MOVIES_CSV = "datasets/movies_merged.csv"
+MOVIES_CSV = "datasets/movies.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
 FAKE_USER_ID = 999999
 FAKE_USER_OCCUPATION = 0  # 0=other/not specified
@@ -53,8 +53,8 @@ if args.user_id is not None:
     print(f"Using existing user {target_user_id} with {len(user_ratings)} ratings.")
     user_demo = users[users["user_id"] == target_user_id]
     if not user_demo.empty:
-        row = user_demo.iloc[0]
-        print(f"User demographics: age={row['age']}, gender={row['gender']}, occupation={row['occupation']}")
+        demo_row = user_demo.iloc[0]
+        print(f"User demographics: age={demo_row['age']}, gender={demo_row['gender']}, occupation={demo_row['occupation']}")
 else:
     target_user_id = FAKE_USER_ID
 
@@ -67,11 +67,11 @@ else:
     # Inject fake user into ratings
     # Resolve title -> movie_id via ml1m_movies
     title_to_id = {}
-    for _, row in ml1m_movies.iterrows():
-        clean = row["title"].lower()
-        clean = __import__("re").sub(r'\s*\(\d{4}\)\s*$', '', clean).strip()
-        clean = __import__("re").sub(r'^(.*),\s*(the|a|an)$', r'\2 \1', clean, flags=__import__("re").IGNORECASE).strip()
-        title_to_id[clean] = row["movie_id"]
+    for _, movie_row in ml1m_movies.iterrows():
+        normalized_title = movie_row["title"].lower()
+        normalized_title = __import__("re").sub(r'\s*\(\d{4}\)\s*$', '', normalized_title).strip()
+        normalized_title = __import__("re").sub(r'^(.*),\s*(the|a|an)$', r'\2 \1', normalized_title, flags=__import__("re").IGNORECASE).strip()
+        title_to_id[normalized_title] = movie_row["movie_id"]
 
     fake_rows = []
     for review in USER_REVIEWS:
@@ -128,19 +128,19 @@ if not args.no_bert:
     db_titles = movies_db['Title']
 
     for movie in knn_movies:
-        match = movies_db[db_titles == movie['title']]
-        text = ""
-        if not match.empty:
-            row = match.iloc[0]
-            overview = str(row.get("Overview", "")) if pd.notna(row.get("Overview")) else ""
-            tagline  = str(row.get("Tagline",  "")) if pd.notna(row.get("Tagline"))  else ""
-            text = (overview + " " + tagline).strip()
-        movie['bert_score'] = score_text(text, bert_model, tokenizer) if text else 0.5
+        db_match = movies_db[db_titles == movie['title']]
+        scoring_text = ""
+        if not db_match.empty:
+            db_row = db_match.iloc[0]
+            overview = str(db_row.get("Overview", "")) if pd.notna(db_row.get("Overview")) else ""
+            tagline  = str(db_row.get("Tagline",  "")) if pd.notna(db_row.get("Tagline"))  else ""
+            scoring_text = (overview + " " + tagline).strip()
+        movie['bert_score'] = score_text(scoring_text, bert_model, tokenizer) if scoring_text else 0.5
 
-    knn_movies = sorted(knn_movies, key=lambda m: m['bert_score'], reverse=True)
+    knn_movies = sorted(knn_movies, key=lambda movie: movie['bert_score'], reverse=True)
 
-    for m in knn_movies:
-        print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
+    for movie in knn_movies:
+        print(f"  {movie['title']:<50} bert={movie['bert_score']:.4f}")
 
 # Boost
 print("Loading movies DB and applying boost")

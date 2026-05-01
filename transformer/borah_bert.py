@@ -10,10 +10,16 @@ from transformers import BertTokenizer, BertModel
 import torch
 from tqdm import tqdm
 
+
+"""
+TRAINING FILE RAN ON BORAH
+Give a .pt file to pull down and use. Must save it as bert_final.pt
+"""
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 RATINGS_PATH = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'ml-1m', 'ratings.dat')
-MOVIES_PATH  = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'movies_merged.csv')
+MOVIES_PATH  = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'movies.csv')
 MODEL_DIR    = os.path.join(os.path.dirname(__file__), '..', 'datasets', 'bert_model')
 
 MAX_LEN = 128

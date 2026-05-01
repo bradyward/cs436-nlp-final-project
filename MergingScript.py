@@ -103,5 +103,5 @@ new_rows = movies1m[mask]
 movies = pd.concat([movies, new_rows], ignore_index=True)
 
 # Save merged datasets
-movies.to_csv("datasets/movies_merged.csv", index=False)
-print("Saved movies_merged.csv")
+movies.to_csv("datasets/movies.csv", index=False)
+print("Saved movies.csv")

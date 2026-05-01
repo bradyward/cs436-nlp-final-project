@@ -31,17 +31,17 @@ class KNNRecommender:
         self.user_index = {u: i for i, u in enumerate(sorted_users)}
         self.movie_index = {m: j for j, m in enumerate(sorted_movies)}
 
-        rows, cols, data = [], [], []
+        row_indices, col_indices, rating_values = [], [], []
         for _, row in tqdm(train.iterrows(), total=len(train), desc="Building matrix", unit="rating"):
-            u = self.user_index[row["user_id"]]
-            m = self.movie_index[row["movie_id"]]
-            rows.append(u)
-            cols.append(m)
-            data.append(row["rating"])
+            user_pos = self.user_index[row["user_id"]]
+            movie_pos = self.movie_index[row["movie_id"]]
+            row_indices.append(user_pos)
+            col_indices.append(movie_pos)
+            rating_values.append(row["rating"])
 
         num_users = len(sorted_users)
         num_movies = len(sorted_movies)
-        mat = csr_matrix((data, (rows, cols)), shape=(num_users, num_movies), dtype=np.float64)
+        mat = csr_matrix((rating_values, (row_indices, col_indices)), shape=(num_users, num_movies), dtype=np.float64)
 
         self.ratings_lookup = {
             (row["user_id"], row["movie_id"]): row["rating"]
@@ -84,14 +84,13 @@ class KNNRecommender:
         self.model.fit(mat)
 
     def _neighbors(self, user_id: int):
-        user_index = self.user_index[user_id]
-        distances, indices = self.model.kneighbors(self.matrix[user_index], n_neighbors=self.k + 1)
-        # Cosine distance to similarity
+        user_row = self.user_index[user_id]
+        distances, indices = self.model.kneighbors(self.matrix[user_row], n_neighbors=self.k + 1)
         neighbors = []
-        for index, dist in zip(indices[0], distances[0]):
-            if index != user_index:
-                similarity = 1 - dist
-                neighbors.append((index, similarity))
+        for neighbor_row, cosine_dist in zip(indices[0], distances[0]):
+            if neighbor_row != user_row:
+                similarity = 1 - cosine_dist
+                neighbors.append((neighbor_row, similarity))
         return neighbors
 
     def predict_rating(self, user_id: int, movie_id: int) -> float:
@@ -99,26 +98,26 @@ class KNNRecommender:
             return self.global_mean
 
         neighbors = self._neighbors(user_id)
-        idx_to_uid = {v: k for k, v in self.user_index.items()}
-        numer, d = 0.0, 0.0
+        matrix_idx_to_user_id = {v: k for k, v in self.user_index.items()}
+        weighted_sum, total_weight = 0.0, 0.0
 
-        for n_idx, sim in neighbors:
-            if sim <= 0:
+        for neighbor_idx, similarity in neighbors:
+            if similarity <= 0:
                 continue
-            n_uid = idx_to_uid[n_idx]
-            raw_rating = self.ratings_lookup.get((n_uid, movie_id))
-            if raw_rating is None:
+            neighbor_user_id = matrix_idx_to_user_id[neighbor_idx]
+            neighbor_rating = self.ratings_lookup.get((neighbor_user_id, movie_id))
+            if neighbor_rating is None:
                 continue
 
-            deviation = raw_rating - self.user_means.get(n_uid, self.global_mean)
-            numer += sim * deviation
-            d += abs(sim)
+            deviation = neighbor_rating - self.user_means.get(neighbor_user_id, self.global_mean)
+            weighted_sum += similarity * deviation
+            total_weight += abs(similarity)
 
-        if d == 0:
+        if total_weight == 0:
             return self.user_means.get(user_id, self.global_mean)
 
         user_mean = self.user_means.get(user_id, self.global_mean)
-        return user_mean + (numer / d)
+        return user_mean + (weighted_sum / total_weight)
 
     def recommend(self, user_id, movies_df = None, n = 10) -> pd.DataFrame:
         if user_id not in self.user_index:

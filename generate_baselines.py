@@ -27,15 +27,15 @@ test  = test[test["movie_id"].isin(set(train["movie_id"]))].copy()
 # KNN global mean baseline
 global_mean = train["rating"].mean()
 knn_sample = test.sample(min(SAMPLE_KNN, len(test)), random_state=SEED)
-errs = knn_sample["rating"].values - global_mean
-print(f"KNN global mean baseline: RMSE={np.sqrt(np.mean(errs**2)):.4f}  MAE={np.mean(np.abs(errs)):.4f}")
+rating_errors = knn_sample["rating"].values - global_mean
+print(f"KNN global mean baseline: RMSE={np.sqrt(np.mean(rating_errors**2)):.4f}  MAE={np.mean(np.abs(rating_errors)):.4f}")
 
 # Title normalization
 id_to_title = {}
 for _, row in movies_df.iterrows():
-    t = re.sub(r'\s*\(\d{4}\)\s*$', '', row["title"])
-    t = re.sub(r'^(.*),\s*(the|a|an)$', r'\2 \1', t, flags=re.IGNORECASE)
-    id_to_title[row["movie_id"]] = t.lower().strip()
+    normalized_title = re.sub(r'\s*\(\d{4}\)\s*$', '', row["title"])
+    normalized_title = re.sub(r'^(.*),\s*(the|a|an)$', r'\2 \1', normalized_title, flags=re.IGNORECASE)
+    id_to_title[row["movie_id"]] = normalized_title.lower().strip()
 
 # Top-10 most-rated movies globally (by train count)
 popular_ids = train["movie_id"].value_counts().head(TOP_K).index.tolist()
@@ -46,33 +46,33 @@ rng = np.random.default_rng(SEED)
 eligible = sorted(set(train["user_id"]) & set(test["user_id"]))
 sampled = rng.choice(eligible, size=min(N_USERS, len(eligible)), replace=False)
 
-rand_p, rand_r, rand_f = [], [], []
-pop_p,  pop_r,  pop_f  = [], [], []
+random_precisions, random_recalls, random_f1s = [], [], []
+popularity_precisions, popularity_recalls, popularity_f1s = [], [], []
 
-for uid in sampled:
-    user_test = test[test["user_id"] == uid]
-    relevant = {id_to_title[m] for m in user_test[user_test["rating"] >= 4]["movie_id"].values if m in id_to_title}
-    if not relevant:
+for user_id in sampled:
+    user_test = test[test["user_id"] == user_id]
+    relevant_titles = {id_to_title[m] for m in user_test[user_test["rating"] >= 4]["movie_id"].values if m in id_to_title}
+    if not relevant_titles:
         continue
 
-    seen = {id_to_title[m] for m in train[train["user_id"] == uid]["movie_id"].values if m in id_to_title}
-    unseen_ids = [m for m in id_to_title if id_to_title[m] not in seen]
+    seen_titles = {id_to_title[m] for m in train[train["user_id"] == user_id]["movie_id"].values if m in id_to_title}
+    unseen_ids = [m for m in id_to_title if id_to_title[m] not in seen_titles]
 
     # Random baseline
-    rand_pick = set(id_to_title[m] for m in rng.choice(unseen_ids, size=min(TOP_K, len(unseen_ids)), replace=False))
-    hits = len(rand_pick & relevant)
-    rp = hits / TOP_K
-    rr = hits / len(relevant)
-    rand_p.append(rp); rand_r.append(rr)
-    rand_f.append(2*rp*rr/(rp+rr) if (rp+rr) > 0 else 0.0)
+    random_picks = set(id_to_title[m] for m in rng.choice(unseen_ids, size=min(TOP_K, len(unseen_ids)), replace=False))
+    hits = len(random_picks & relevant_titles)
+    precision = hits / TOP_K
+    recall = hits / len(relevant_titles)
+    random_precisions.append(precision); random_recalls.append(recall)
+    random_f1s.append(2*precision*recall/(precision+recall) if (precision+recall) > 0 else 0.0)
 
     # Popularity baseline (only top 10 highest rated movies)
-    hits = len(popular_titles & relevant)
-    pp = hits / TOP_K
-    pr = hits / len(relevant)
-    pop_p.append(pp); pop_r.append(pr)
-    pop_f.append(2*pp*pr/(pp+pr) if (pp+pr) > 0 else 0.0)
+    hits = len(popular_titles & relevant_titles)
+    precision = hits / TOP_K
+    recall = hits / len(relevant_titles)
+    popularity_precisions.append(precision); popularity_recalls.append(recall)
+    popularity_f1s.append(2*precision*recall/(precision+recall) if (precision+recall) > 0 else 0.0)
 
-print(f"Pipeline random baseline:     P@10={np.mean(rand_p):.4f}  R@10={np.mean(rand_r):.4f}  F1@10={np.mean(rand_f):.4f}")
-print(f"Pipeline popularity baseline: P@10={np.mean(pop_p):.4f}  R@10={np.mean(pop_r):.4f}  F1@10={np.mean(pop_f):.4f}")
+print(f"Pipeline random baseline:     P@10={np.mean(random_precisions):.4f}  R@10={np.mean(random_recalls):.4f}  F1@10={np.mean(random_f1s):.4f}")
+print(f"Pipeline popularity baseline: P@10={np.mean(popularity_precisions):.4f}  R@10={np.mean(popularity_recalls):.4f}  F1@10={np.mean(popularity_f1s):.4f}")
 
