@@ -14,12 +14,11 @@ from bert import load_model, score_text
 
 
 
-MOVIES_CSV = "datasets/movies.csv"
+MOVIES_CSV = "datasets/movies_merged.csv"
 BERT_MODEL_PATH = "transformer/bert_final.pt"
 FAKE_USER_ID = 999999
-
 FAKE_USER_OCCUPATION = 0  # 0=other/not specified
-# USER 1: Sci-Fi / Action Fan
+
 FAKE_USER_AGE = 28
 FAKE_USER_GENDER = "M" 
 USER_REVIEWS = [
@@ -29,23 +28,37 @@ USER_REVIEWS = [
 ]
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Movie recommendation pipeline")
-    parser.add_argument("--knn_n", type=int, default=50) # KNN candidates before BERT rerank
-    parser.add_argument("--knn_top", type=int, default=10) # Top KNN movies in final output
-    parser.add_argument("--boost_top", type=int, default=10) # Top boosted movies in final output
-    parser.add_argument("--no_bert", action="store_true") # Skip BERT scoring
-    args = parser.parse_args()
+parser = argparse.ArgumentParser(description="Movie recommendation pipeline")
+parser.add_argument("--knn_n", type=int, default=50) # KNN candidates before BERT rerank
+parser.add_argument("--knn_top", type=int, default=10) # Top KNN movies in final output
+parser.add_argument("--boost_top", type=int, default=10) # Top boosted movies in final output
+parser.add_argument("--no_bert", action="store_true") # Skip BERT scoring
+parser.add_argument("--user_id", type=int, default=None) # Use existing ml-1m user instead of fake user
+args = parser.parse_args()
 
-    print("Loading ratings and ml-1m movies...")
-    ratings = load_ratings()
-    ml1m_movies = load_movies()
-    users = load_users()
+print("Loading ratings and ml-1m movies...")
+ratings = load_ratings()
+ml1m_movies = load_movies()
+users = load_users()
+
+print("Loading BERT model...")
+bert_model, tokenizer = load_model(BERT_MODEL_PATH)
+
+if args.user_id is not None:
+    target_user_id = args.user_id
+    user_ratings = ratings[ratings["user_id"] == target_user_id]
+    if user_ratings.empty:
+        print(f"Error: user_id {target_user_id} not found in ml-1m dataset.")
+        sys.exit(1)
+    print(f"Using existing user {target_user_id} with {len(user_ratings)} ratings.")
+    user_demo = users[users["user_id"] == target_user_id]
+    if not user_demo.empty:
+        row = user_demo.iloc[0]
+        print(f"User demographics: age={row['age']}, gender={row['gender']}, occupation={row['occupation']}")
+else:
+    target_user_id = FAKE_USER_ID
 
     # Score user reviews with BERT
-    print("Loading BERT model...")
-    bert_model, tokenizer = load_model(BERT_MODEL_PATH)
-
     print("Scoring user reviews with BERT")
     for review in USER_REVIEWS:
         review["bert_score"] = score_text(review["review"], bert_model, tokenizer)
@@ -94,51 +107,51 @@ if __name__ == "__main__":
     users = pd.concat([users, fake_user_demo], ignore_index=True)
     print(f"Fake user demographics: age={FAKE_USER_AGE}, gender={FAKE_USER_GENDER}, occupation={FAKE_USER_OCCUPATION}")
 
-    # KNN
-    print(f"Fitting KNN on {len(ratings):,} ratings")
-    knn_model = KNNRecommender(k=20)
-    knn_model.fit(ratings, users=users)
+# KNN
+print(f"Fitting KNN on {len(ratings):,} ratings")
+knn_model = KNNRecommender(k=20)
+knn_model.fit(ratings, users=users)
 
-    print(f"Generating {args.knn_n} KNN candidates for fake user")
-    knn_df = knn_model.recommend(user_id=FAKE_USER_ID, movies_df=ml1m_movies, n=args.knn_n)
+print(f"Generating {args.knn_n} KNN candidates for user {target_user_id}")
+knn_df = knn_model.recommend(user_id=target_user_id, movies_df=ml1m_movies, n=args.knn_n)
 
-    if knn_df.empty:
-        print("No KNN candidates found for fake user")
-        sys.exit(1)
+if knn_df.empty:
+    print(f"No KNN candidates found for user {target_user_id}")
+    sys.exit(1)
 
-    knn_movies = knn_df.to_dict(orient="records")
+knn_movies = knn_df.to_dict(orient="records")
 
-    # BERT rerank KNN candidates by overview sentiment
-    if not args.no_bert:
-        print("Scoring KNN candidates with BERT sentiment")
-        movies_db = pd.read_csv(MOVIES_CSV)
-        db_titles = movies_db['Title']
-
-        for movie in knn_movies:
-            match = movies_db[db_titles == movie['title']]
-            text = ""
-            if not match.empty:
-                row = match.iloc[0]
-                overview = str(row.get("Overview", "")) if pd.notna(row.get("Overview")) else ""
-                tagline  = str(row.get("Tagline",  "")) if pd.notna(row.get("Tagline"))  else ""
-                text = (overview + " " + tagline).strip()
-            movie['bert_score'] = score_text(text, bert_model, tokenizer) if text else 0.5
-
-        knn_movies = sorted(knn_movies, key=lambda m: m['bert_score'], reverse=True)
-
-        for m in knn_movies:
-            print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
-
-    # Boost
-    print("Loading movies DB and applying boost")
+# BERT rerank KNN candidates by overview sentiment
+if not args.no_bert:
+    print("Scoring KNN candidates with BERT sentiment")
     movies_db = pd.read_csv(MOVIES_CSV)
+    db_titles = movies_db['Title']
 
-    final = boost_recommendations(
-        knn_movies=knn_movies,
-        movies_db=movies_db,
-        knn_top=args.knn_top,
-        boost_top=args.boost_top,
-    )
+    for movie in knn_movies:
+        match = movies_db[db_titles == movie['title']]
+        text = ""
+        if not match.empty:
+            row = match.iloc[0]
+            overview = str(row.get("Overview", "")) if pd.notna(row.get("Overview")) else ""
+            tagline  = str(row.get("Tagline",  "")) if pd.notna(row.get("Tagline"))  else ""
+            text = (overview + " " + tagline).strip()
+        movie['bert_score'] = score_text(text, bert_model, tokenizer) if text else 0.5
 
-    print("\n=== Final Recommendations ===")
-    print(final.to_string(index=False))
+    knn_movies = sorted(knn_movies, key=lambda m: m['bert_score'], reverse=True)
+
+    for m in knn_movies:
+        print(f"  {m['title']:<50} bert={m['bert_score']:.4f}")
+
+# Boost
+print("Loading movies DB and applying boost")
+movies_db = pd.read_csv(MOVIES_CSV)
+
+final = boost_recommendations(
+    knn_movies=knn_movies,
+    movies_db=movies_db,
+    knn_top=args.knn_top,
+    boost_top=args.boost_top,
+)
+
+print("\n=== Final Recommendations ===")
+print(final.to_string(index=False))
